@@ -15,13 +15,22 @@ A PE file packer for Windows x64.
 
 ## Screenshots
 
+<table width="100%">
+  <tr>
+    <td width="50%" align="center">
+      <b>Before (Original File)</b><br><br>
+      <img src="images/before.png" alt="Before Packing" width="100%">
+    </td>
+    <td width="50%" align="center">
+      <b>After (Packed with PEProtect)</b><br><br>
+      <img src="images/after.png" alt="After Packing" width="100%">
+    </td>
+  </tr>
+</table>
+
 <p align="center">
-  <img src="images/before.png" alt="Before Packing" width="1080">
-  <img src="images/after.png" alt="After Packing" width="1080">
-  <br>
   <em>Example of a file before and after packing with PEProtect</em>
 </p>
-
 You can check out the VirusTotal test results for a sample file processed with this tool:
 * [VirusTotal Report (Before Packing)](https://www.virustotal.com/gui/file/127cd97708944110d0f13bbc7b1e912cc6cf12740b16e1c15fd5562e687a83f1/detection)
 * [VirusTotal Report (After Packing)](https://www.virustotal.com/gui/file/627d334cb41ab3cb3045a0f7271c3a9bd56502c468530f20842bd395966a6705?nocache=1)
