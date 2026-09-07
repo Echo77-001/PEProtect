@@ -16,8 +16,8 @@ A PE file packer for Windows x64.
 ## Screenshots
 
 <p align="center">
-  <img src="images/before.png" alt="Before Packing" width="450">
-  <img src="images/after.png" alt="After Packing" width="450">
+  <img src="images/before.png" alt="Before Packing" width="1080">
+  <img src="images/after.png" alt="After Packing" width="1080">
   <br>
   <em>Example of a file before and after packing with PEProtect</em>
 </p>
