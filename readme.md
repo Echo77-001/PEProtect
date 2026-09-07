@@ -9,7 +9,7 @@ A PE file packer for Windows x64.
 
 * Reads the original EXE, parses sections, the import table, and relocations.
 * Manually restores everything at runtime.
-* Manually resolves function addresses using the PEB (Process Environment Block).
+* Manually resolves function addresses using the PEB.
 
 ## Analysis & Tests
 
