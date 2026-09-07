@@ -62,3 +62,9 @@ Example:
   PEProtect target.exe -printData
   PEProtect calc.exe
 ```
+
+## To-Do
+
+- [ ] **Mutation Engine** Junk code insertion & instruction substitution.
+- [ ] **Anti-Debugging** `IsDebuggerPresent`, PEB checks & `RDTSC` timing.
+- [ ] **Code Virtualization** Custom bytecode interpreter for sensitive functions.
