@@ -1,67 +1,15 @@
-﻿cmake_minimum_required(VERSION 3.12)
+﻿# CMakeList.txt: файл проекта CMake верхнего уровня; проведите глобальную конфигурацию
+# и включите сюда подпроекты.
+#
+cmake_minimum_required (VERSION 3.10)
 
-project(PEProtect LANGUAGES CXX ASM)
+# Включение горячей перезагрузки для компиляторов MSVC, если поддерживается.
+if (POLICY CMP0141)
+  cmake_policy(SET CMP0141 NEW)
+  set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<IF:$<AND:$<C_COMPILER_ID:MSVC>,$<CXX_COMPILER_ID:MSVC>>,$<$<CONFIG:Debug,RelWithDebInfo>:EditAndContinue>,$<$<CONFIG:Debug,RelWithDebInfo>:ProgramDatabase>>")
+endif()
 
-set(CMAKE_CXX_STANDARD 20)
+project ("PEProtect")
 
-enable_language(ASM_MASM)
-
-set(ZSTD_BUILD_STATIC ON CACHE INTERNAL "")
-set(ZSTD_BUILD_SHARED OFF CACHE INTERNAL "")
-set(ZSTD_BUILD_PROGRAMS OFF CACHE INTERNAL "")
-set(ZSTD_BUILD_TESTS OFF CACHE INTERNAL "")
-
-include(FetchContent)
-
-FetchContent_Declare(
-    zstd
-    URL "https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz"
-    SOURCE_SUBDIR build/cmake
-)
-
-FetchContent_MakeAvailable(zstd)
-
-add_executable(PEProtect
-    src/main.cpp
-    src/core/BasicPe.cpp
-    src/core/BasicPe.h
-    src/core/PEBuilder.cpp
-    src/core/PEBuilder.h
-    src/core/PEParser.cpp
-    src/core/PEParser.h
-    src/core/Utils.cpp
-    src/core/Utils.h
-    src/disassembler/disassembler.cpp
-    src/disassembler/disassembler.h
-    src/enums/Enums.h
-    src/vm/VMInstruction.h
-    src/vm/VMInstruction.cpp
-    src/vm/VMCodeBlock.h
-    src/vm/VMCodeBlock.cpp
-)
-
-add_library(PEProtect_core SHARED
-    core/main.cpp
-    core/Structs.h
-    core/func.asm
-)
-
-target_include_directories(PEProtect PRIVATE 
-    ${CMAKE_CURRENT_SOURCE_DIR} 
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/core
-    ${zstd_SOURCE_DIR}/lib
-)
-
-target_include_directories(PEProtect_core PRIVATE 
-    ${CMAKE_CURRENT_SOURCE_DIR}/core
-    ${zstd_SOURCE_DIR}/lib
-)
-
-target_link_libraries(PEProtect PRIVATE 
-    libzstd_static
-)
-
-target_link_libraries(PEProtect_core PRIVATE 
-    libzstd_static
-)
+# Включите подпроекты.
+add_subdirectory ("PEProtect")
