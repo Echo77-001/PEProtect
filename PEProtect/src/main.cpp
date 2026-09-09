@@ -112,8 +112,8 @@ std::vector<uint8_t> buildData() {
         result.insert(result.end(),&sectionsToWrite[i].name[0], &sectionsToWrite[i].name[8]);
 
         append_u32_le(result, sectionsToWrite[i].characteristics);
-        DWORD secOffset = RvaToOffset(inputFile.getNtHeader(), sectionsToWrite[i].virtualAddres);
-        result.insert(result.end(), inputFile.getRawBytes().data() + secOffset, inputFile.getRawBytes().data() + secOffset + sectionsToWrite[i].sizeofRawData);
+
+        result.insert(result.end(), sectionsToWrite[i].data.data(), sectionsToWrite[i].data.data() + sectionsToWrite[i].sizeofRawData);
     }
 
     auto origIAT = inputFile.getOriginalIAT();
@@ -194,6 +194,9 @@ std::vector<uint8_t> buildData() {
 
     result.insert(result.end(), magikSig.begin(), magikSig.end());
     
+    //print_hex_dump(result.data(), result.size());
+    if (printVmData)print_hex_dump(result.data(), result.size());
+
     uint32_t origSz = result.size();
     std::vector<uint8_t> compressed = compress_data(result);
     uint32_t compSz = compressed.size();
@@ -205,7 +208,6 @@ std::vector<uint8_t> buildData() {
 
     if (final_buffer.size() < origSz) final_buffer.resize(origSz, 0x00);
     
-
     return final_buffer;
 }
 
@@ -261,8 +263,6 @@ int buildEXE() {
     IMAGE_OPTIONAL_HEADER64* optHeader = &ntheader->OptionalHeader;
 
     fileHeader->SizeOfOptionalHeader = sizeof(IMAGE_OPTIONAL_HEADER64);
-
-    if(printVmData)print_hex_dump(vmData.data(), vmData.size());
     
     uint32_t fileAlign = vmEngineParser.getNtHeader()->OptionalHeader.FileAlignment;
     uint32_t secAlign = vmEngineParser.getNtHeader()->OptionalHeader.SectionAlignment;

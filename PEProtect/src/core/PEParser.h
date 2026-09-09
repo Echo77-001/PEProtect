@@ -16,6 +16,10 @@ private:
     
     const std::vector<SectionInfo> parseSectionList(bool logSection = 0) const;
 
+    void getBlocksToVirt();
+
+    DWORD tagVmStartRVA = 0, tagVmEndRVA = 0;
+    
 public:
 
     DWORD getVaFromExportTable(const char* funcName);

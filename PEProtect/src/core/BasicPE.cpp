@@ -1,4 +1,5 @@
 #include "BasicPE.h"
+#include<sstream>
 
 SectionInfo* const BasicPE::getMaxSectionVA() const
 {
@@ -59,6 +60,63 @@ std::vector<RelocationEntry> BasicPE::ParseRelocations() {
     }
 
     return relocationList;
+}
+
+std::vector<DWORD> BasicPE::PatternScan(const char* pattern) // ida format
+{
+    std::vector<DWORD> result;
+
+    std::vector<uint8_t> patternBytes;
+    std::vector<bool> patternMask;
+
+    std::stringstream ss(pattern);
+    std::string token;
+
+    while (ss >> token) {
+        if (token == "?" || token == "??") {
+            patternBytes.push_back(0);
+            patternMask.push_back(false);
+        }
+        else {
+            uint8_t byte = (uint8_t)std::stoul(token, nullptr, 16);
+            patternBytes.push_back(byte);
+            patternMask.push_back(true);
+        }
+    }
+
+    if (patternBytes.empty()) return result;
+
+    for (const auto& section : sectionList) {
+        if ((section.characteristics & IMAGE_SCN_CNT_CODE) == 0) continue;
+
+        DWORD rva = section.virtualAddres;
+        DWORD size = section.sizeofRawData;
+        DWORD offset = RvaToOffset(ntheader, rva);
+
+        if (size < patternBytes.size()) continue;
+
+        uint8_t* sectionBytes = this->originalBinFile.data() + offset;
+
+        for (size_t j = 0; j <= size - patternBytes.size(); j++) {
+            bool validSig = true;
+
+            for (size_t k = 0; k < patternBytes.size(); k++) {
+                if (!patternMask[k]) continue;
+
+                if (patternBytes[k] != sectionBytes[j + k]) {
+                    validSig = false;
+                    break;
+                }
+            }
+
+            if (validSig) {
+                DWORD foundRVA = rva + j;
+                result.push_back(foundRVA);
+            }
+        }
+    }
+
+    return result;
 }
 
 std::vector<RelocationEntry> BasicPE::getRelocs()

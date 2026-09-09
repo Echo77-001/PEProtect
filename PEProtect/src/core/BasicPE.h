@@ -50,6 +50,12 @@ struct DataDirectoryInfo {
     UINT32 rva;
 };
 
+struct CodeBlockToVirt {
+    DWORD rva, size;
+};
+
+
+
 class BasicPE {
 protected:
 
@@ -70,6 +76,8 @@ protected:
     std::vector<SectionInfo> sectionList;
 
     std::vector<RelocationEntry> relocs;
+
+    std::vector<CodeBlockToVirt> blocksToVirt;
     
     //DWORD SizeOfImage, SizeOfHeaders, SizeOfCode;
     
@@ -77,6 +85,8 @@ protected:
 
 public:
 
+    std::vector<DWORD> PatternScan(const char* patter);
+    
     std::vector<RelocationEntry> getRelocs();
 
     void setSectionsFromArray(const std::vector<SectionInfo>& ready);
