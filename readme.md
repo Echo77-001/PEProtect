@@ -63,8 +63,62 @@ Example:
   PEProtect calc.exe
 ```
 
+## Code Virtualization Integration Guide
+
+To protect sensitive parts of your C/C++ code using virtualization, you need to configure your Visual Studio project to link against the PEProtect SDK libraries:
+
+1. **Include Directories:** Add the `include` folder from the PEProtect SDK to your project's **Additional Include Directories** (*C/C++ -> General -> Additional Include Directories*).
+2. **Library Directories:** Add the path to the PEProtect static libraries to your **Additional Library Directories** (*Linker -> General -> Additional Library Directories*).
+3. **Linker Dependencies:** Add `PEProtect_lib.lib` and `PEProtect_dyn.lib` to your **Additional Dependencies** (*Linker -> Input -> Additional Dependencies*).
+
+### Code Example
+
+Wrap the target code block with `PEPROTECT_START()` and `PEPROTECT_END()` markers:
+
+```cpp
+#include <iostream>
+#include<PEProtect.h>
+
+int main() {
+    std::cout << "Enter key: ";
+
+    unsigned int input = 0;
+    std::cin >> input;
+
+    PEPROTECT_START();
+
+    unsigned int a = input;
+    a -= 337;
+    a ^= 1000;
+
+    a += 0x1234;
+    unsigned int c = a;
+    c <<= 4;
+
+    unsigned int d = 0x0F;
+    c |= d;
+    c >>= 4;
+
+    c &= 0xFFFF;
+    input = c ^ 0x1234;
+
+    PEPROTECT_END();
+
+    if (input != 0) { // key is 1337
+        std::cout << "Wrong key!\n";
+    }
+    else {
+        std::cout << "Success!\n";
+    }
+
+    return 0;
+}
+```
+
 ## To-Do
 
 - [ ] **Mutation Engine** Junk code insertion & instruction substitution.
 - [ ] **Anti-Debugging** `IsDebuggerPresent`, PEB checks & `RDTSC` timing.
 - [ ] **Code Virtualization** Custom bytecode interpreter for sensitive functions.
+  - [ ] Support for basic mathematical instructions only.
+  - [ ] *Note: Control flow instructions (e.g., `jmp`, `call`, `jnz`, `jz`) are not yet implemented.*
