@@ -173,6 +173,7 @@ std::vector<uint8_t> buildData(const std::vector<CodeBlock>& logicalBlocks) {
     for (int i = 0;i < logicalBlocksCount;i++) {
         append_u32_le(result, logicalBlocks[i].instructions.size());
         append_u32_le(result, logicalBlocks[i].id);
+        append_u32_le(result,logicalBlocks[i].id + logicalBlocks[i].originalSize);
         result.insert(result.end(), logicalBlocks[i].instructions.begin(), logicalBlocks[i].instructions.end());
     }
 
@@ -242,7 +243,7 @@ int buildEXE() {
 
     std::vector<uint8_t> vm_entry_patch = {
         0x68,0,0,0,0,
-        0xFF,0x15,0,0,0,0,
+        0xFF,0x15,0,0,0,0, // 0x15/0x25
         0x48,0x83,0xC4,8 // add rsp, 8
     };// 68 0 0 0 0 E8 0 0 0 0
     // 48 83 C4 04 - add rsp, 4

@@ -11,6 +11,7 @@ PUBLIC run_orig_code
 PUBLIC vmEnter_stub
 
 vmEnter_stub PROC
+
     ; pusing all regs
     push r15
     push r14
@@ -30,27 +31,26 @@ vmEnter_stub PROC
     push rdx
     push rcx
     push rbx
-    push rax
-
+    push rax ; 16 pushes
+    
     mov rcx, rsp
     mov rdx, [rsp + 128 + 8]
     sub rsp, 32
     ; todo: separate guest stack and vm stack
     call vmEnter
+    mov [rsp + 168], rax ; changing retunr addr
     add rsp, 32
-
+    
     ; pop all regs
 
-     pop rax
+    pop rax
     pop rbx
     pop rcx
     pop rdx
     pop rsi
     pop rdi
     pop rbp
-
     add rsp, 8
-    
     pop r8
     pop r9
     pop r10
@@ -60,8 +60,16 @@ vmEnter_stub PROC
     pop r14
     pop r15
 
+    add rsp,8
+
     ret
 vmEnter_stub ENDP
+
+run_orig_code2 PROC
+    add rsp,8
+    jmp rcx
+    
+run_orig_code2 ENDP
 
 run_orig_code PROC
     jmp rcx

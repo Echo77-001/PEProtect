@@ -15,6 +15,7 @@ GeneralContext* ctxt;
 
 extern "C" void vmEnter_stub();
 extern "C" void run_orig_code(void* a);
+extern "C" UINT64 run_orig_code2(void* a);
 
 void LogMessage(const char* label, const char* format, ...) {
     char buffer[512];
@@ -385,11 +386,12 @@ UINT64 getRealValue(const BasicInstruction& inst, UINT64* regs, const LogicalBlo
     return 0;
 }
 
-extern "C" void vmEnter(UINT64* regs, UINT64 blockID) {
+// returns ret addr
+extern "C" UINT64 vmEnter(UINT64* regs, UINT64 blockID) {
     auto it = ctxt->logicalBlocks.find(blockID);
     if (it == ctxt->logicalBlocks.end()) {
         LogMessage("", "cant find block with id: %p", blockID);
-        return;
+        return 0;
     }
 
     LogicalBlock& block = it->second;
@@ -405,7 +407,7 @@ extern "C" void vmEnter(UINT64* regs, UINT64 blockID) {
         uint8_t* ptrToWrite = getRawPtrToWrite(inst, regs);
         if (!ptrToWrite) {
             LogMessage("", "cant get ptr to write!");
-            return;
+            return 0;
         }
 
         int nextInstructionOffset = sizeof(BasicInstruction) + (inst.type1 == (uint8_t)OperandType::imm ? opSize : 0);
@@ -527,9 +529,11 @@ extern "C" void vmEnter(UINT64* regs, UINT64 blockID) {
             break;
         default:
             LogMessage("", "unk opcode: %d", operCode);
-            return;
+            return 0;
         }
     }
+    //LogMessage("", "block.vaRet = %p", block.vaRet);
+    return (UINT64)((char*)ctxt->allocedMemRaw + block.vaRet);
 }
 
 
@@ -591,7 +595,7 @@ extern "C" __declspec(dllexport) int runVM(INT8* inputParams) {
     readU8(inputParams, offset, ctxt->sectionCount);
 
     char* allocedMemRaw = (char*)VirtualAlloc((void*)0, ctxt->sizeofImage, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-
+    ctxt->allocedMemRaw = allocedMemRaw;
     if (!allocedMemRaw) {
         DWORD errorCode = GetLastError();
 
@@ -717,12 +721,14 @@ extern "C" __declspec(dllexport) int runVM(INT8* inputParams) {
 
     for (int i = 0;i < logicalBlocksCount;i++) {
         
-        UINT32 instructionsInRawBytes = 0, blockID = 0;
+        UINT32 instructionsInRawBytes = 0, blockID = 0,retAddrVA = 0;
         readU32(inputParams, offset, instructionsInRawBytes);
         readU32(inputParams, offset, blockID);
+        readU32(inputParams,offset, retAddrVA);
 
         ctxt->logicalBlocks[blockID] = LogicalBlock();
-
+        ctxt->logicalBlocks[blockID].vaRet = retAddrVA;
+        
         ctxt->logicalBlocks[blockID].instructions.insert(ctxt->logicalBlocks[blockID].instructions.end(),
             (uint8_t*)inputParams + offset,
             (uint8_t*)inputParams + offset + instructionsInRawBytes

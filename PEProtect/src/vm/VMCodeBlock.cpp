@@ -180,7 +180,8 @@ void CodeBlock::generateFromInstructions(PEParser& file, int sectionIndex, DWORD
     ZyanUSize offset = 0;
     ZydisDisassembledInstruction instruction;
     std::vector<uint8_t> additionalBuffer;
-
+    this->originalSize = 19 + 19 - 6;
+    
     while (offset < len) {
 
         ZydisDisassembleIntel(
@@ -224,7 +225,11 @@ void CodeBlock::generateFromInstructions(PEParser& file, int sectionIndex, DWORD
         offset += instruction.info.length;
         runtime_address += instruction.info.length;
     }
-
-    memset(rawInstructions - 19, 0x90, len + 19);
+    this->originalSize += offset;
+    // memset(rawInstructions - 19, 0x90, len + 19);
     
+    for (int i = 0;i < len + 19;i++) {
+        rawInstructions[i - 19] = rand() % 0xFF;
+    }
+
 }

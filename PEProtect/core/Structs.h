@@ -60,9 +60,11 @@ typedef void* (__stdcall* getPebFn)();
 
 struct LogicalBlock {
     std::vector<uint8_t> instructions;
+    DWORD vaRet;
 };
 
 struct GeneralContext {
+    void* allocedMemRaw = 0;
     UINT8 sectionCount;
     getPebFn getPeb;
     msgBoxA messaageBox;
