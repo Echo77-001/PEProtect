@@ -228,7 +228,7 @@ void CodeBlock::generateFromInstructions(PEParser& file, int sectionIndex, DWORD
     this->originalSize += offset;
     // memset(rawInstructions - 19, 0x90, len + 19);
     
-    for (int i = 0;i < len + 19;i++) {
+    for (int i = 0;i < len + 19 + 13;i++) {
         rawInstructions[i - 19] = rand() % 0xFF;
     }
 
