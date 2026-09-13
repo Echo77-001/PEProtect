@@ -112,13 +112,12 @@ void PEBuilder::write(const std::string& fileName)
     std::vector<char> header_pad(padCount, 0);
 
     exe.write(header_pad.data(), header_pad.size());
-    // std::cout << "### WRITING SECTIONS ###\n";
+
     for (size_t i = 0; i < sectionList.size(); i++) {
         SectionInfo& currentSection = sectionList[i];
 
         if (!currentSection.pointerToRawData) continue;
 
-        // std::cout << "writing " << std::hex << sectionList[i].name << ' ' << sectionList[i].virtualAddres << " rsz: " << sectionList[i].sizeofRawData << " data sz: " << sectionList[i].data.size() << "\n";
         exe.seekp(currentSection.pointerToRawData);
 
         if (currentSection.data.size() >= currentSection.sizeofRawData) {

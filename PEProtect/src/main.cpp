@@ -57,7 +57,7 @@ std::vector<uint8_t> compress_data(const std::vector<uint8_t>& input_data, int c
     return compressed_buffer;
 }
 
-std::vector<uint8_t> buildData() {
+std::vector<uint8_t> buildData(const std::vector<CodeBlock>& logicalBlocks) {
     std::vector<uint8_t> result;
 
     const int maxDataToUse = 4096;
@@ -85,7 +85,7 @@ std::vector<uint8_t> buildData() {
     }
 
     std::cout << "[*] Packing " << std::dec << sectionsToWrite.size() << " sections.\n";
-
+    
     append_u32_le(result, inputFile.getSizeOfImage());
     append_u32_le(result, inputFile.getEntryPointRVA());
     
@@ -112,8 +112,7 @@ std::vector<uint8_t> buildData() {
         result.insert(result.end(),&sectionsToWrite[i].name[0], &sectionsToWrite[i].name[8]);
 
         append_u32_le(result, sectionsToWrite[i].characteristics);
-
-        result.insert(result.end(), sectionsToWrite[i].data.data(), sectionsToWrite[i].data.data() + sectionsToWrite[i].sizeofRawData);
+        result.insert(result.end(), sectionsToWrite[i].data.data(), sectionsToWrite[i].data.data() + min(sectionsToWrite[i].sizeofRawData, sectionsToWrite[i].virtualSize));
     }
 
     auto origIAT = inputFile.getOriginalIAT();
@@ -129,21 +128,12 @@ std::vector<uint8_t> buildData() {
         append_u32_le(result, origIAT[i].functionsToImport.size()); // func count to import
 
         for (int j = 0; j < origIAT[i].functionsToImport.size(); j++) {
-            /*
-
-            import func:
-            [u32 id (RVA from original dll)]
-            [str func name0]
-
-            */
 
             append_u32_le(result, origIAT[i].functionsToImport[j].RealAddressRva);
 
             if (origIAT[i].functionsToImport[j].ordinal) {
                 result.push_back(1);
                 append_u16_le(result,origIAT[i].functionsToImport[j].ordValue);
-                //result.insert(result.end(), origIAT[i].functionsToImport[j].name.data(), origIAT[i].functionsToImport[j].name.data() + origIAT[i].functionsToImport[j].name.size());
-                //result.push_back(0);
             }
             else {
                 result.push_back(0);
@@ -175,8 +165,15 @@ std::vector<uint8_t> buildData() {
         }
     }
     else {
-        std::cout << "[WARN] DELETING RELOCS!\n";
         append_u32_le(result, 0);
+    }
+    int logicalBlocksCount = logicalBlocks.size();
+    append_u32_le(result, logicalBlocksCount);
+
+    for (int i = 0;i < logicalBlocksCount;i++) {
+        append_u32_le(result, logicalBlocks[i].instructions.size());
+        append_u32_le(result, logicalBlocks[i].id);
+        result.insert(result.end(), logicalBlocks[i].instructions.begin(), logicalBlocks[i].instructions.end());
     }
 
     std::vector<uint8_t> magikSig = {
@@ -191,10 +188,9 @@ std::vector<uint8_t> buildData() {
         0x9A, 0x9C, 0x97, 0x90, 0xA0, 0xC8, 0xC8, 0xC8,
         0xC8, 0xC8, 0x13, 0x37, 0x42, 0x89, 0x54, 0x73
     };
-
+    
     result.insert(result.end(), magikSig.begin(), magikSig.end());
     
-    //print_hex_dump(result.data(), result.size());
     if (printVmData)print_hex_dump(result.data(), result.size());
 
     uint32_t origSz = result.size();
@@ -229,9 +225,47 @@ int buildEXE() {
         0x48, 0x8d, 0xd, 0 ,0, 0, 0, // lea rcx, [rip + ???] ; loading vm ctxt
         0xE9,0,0,0,0 // jmp runVM
     });
+    
+    const std::vector<CodeBlockToVirt>& blocksToVirt =inputFile.getBlocksToVirt();
+
+    std::vector<CodeBlock> logicalBlocks(blocksToVirt.size());
+
+    auto& originalSection = inputFile.getSectionList();
+
+    for (int i = 0;i < blocksToVirt.size();i++) {
+        int secIdx = inputFile.getSectionIndexFromRVA(blocksToVirt[i].rva);
+        SectionInfo& sec = originalSection[secIdx];
+        DWORD off = blocksToVirt[i].rva - sec.virtualAddres + 13+6;
+        logicalBlocks[i].id = blocksToVirt[i].rva;
+        logicalBlocks[i].generateFromInstructions(inputFile,secIdx,off,off + blocksToVirt[i].size);
+    }
+
+    std::vector<uint8_t> vm_entry_patch = {
+        0x68,0,0,0,0,
+        0xFF,0x15,0,0,0,0,
+        0x48,0x83,0xC4,8 // add rsp, 8
+    };// 68 0 0 0 0 E8 0 0 0 0
+    // 48 83 C4 04 - add rsp, 4
+    
+    DWORD realMain = vmEngineParser.getVaFromExportTable("runVM");
+    DWORD vmEnterStub = vmEngineParser.getVaFromExportTable("vmEnter_stub");
+
+    DWORD vaImportFunc = inputFile.getRvaImportFunc("PEProtect_dyn.dll","vmEntryStub");
+
+    for (int i = 0;i < blocksToVirt.size();i++) {
+        int secIdx = inputFile.getSectionIndexFromRVA(blocksToVirt[i].rva);
+        SectionInfo& sec = originalSection[i];
+        DWORD off = blocksToVirt[i].rva - sec.virtualAddres;
+
+        *(uint32_t*)(vm_entry_patch.data() + 1) = logicalBlocks[i].id;
+        
+        *(uint32_t*)(vm_entry_patch.data() + 7) = calcRipOffset(vaImportFunc,blocksToVirt[i].rva + 5,6);
+        
+        memcpy(sec.data.data() + off, vm_entry_patch.data(), vm_entry_patch.size());
+    }
 
     // writing vmdata immediately after trampoline
-    std::vector<uint8_t> vmData = buildData();
+    std::vector<uint8_t> vmData = buildData(logicalBlocks);
 
     DWORD vmDataOffset = entry_stub.size();
     entry_stub.insert(entry_stub.end(), vmData.begin(), vmData.end());
@@ -241,9 +275,11 @@ int buildEXE() {
         ".PACK0  ",
         entry_stub.data());
     
-    DWORD realMain = vmEngineParser.getVaFromExportTable("runVM");
+    
     std::cout << "[*] runVM va: 0x" <<std::hex <<  realMain << '\n';
+    std::cout << "[*] vmEnter_stub va: 0x" << vmEnterStub << '\n';
     std::cout << "[*] CRT va: 0x" << crt_init_rva << '\n';
+    std::cout << "[*] vaImportFunc va: 0x" << vaImportFunc << '\n';
 
     // fixing rva
     *(DWORD*)&vmSection->data[1] = calcRipOffset(crt_init_rva, vmSection->virtualAddres, 5); // CRT startup
@@ -270,7 +306,6 @@ int buildEXE() {
     optHeader->FileAlignment = fileAlign;
     optHeader->SectionAlignment = secAlign;
 
-    // memcpy(optHeader->DataDirectory, vmEngineParser.getDataDirectory(), IMAGE_NUMBEROF_DIRECTORY_ENTRIES * sizeof(IMAGE_DATA_DIRECTORY));
     for (int i = 0;i < 16;i++) {
         memcpy(&optHeader->DataDirectory[i], &vmEngineParser.getDataDirectory()[i].raw, sizeof(IMAGE_DATA_DIRECTORY));
     }

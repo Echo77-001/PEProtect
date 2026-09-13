@@ -1,20 +1,23 @@
-#include"Structs.h"
+#pragma comment(linker, "/export:vmEnter_stub")
+
 #include<Windows.h>
 #include<string>
-
-#include<cstdio>
-#include <vector>
-
 #include<iostream>
-#include <map>
 #include<iomanip>
 #include<string_view>
 #include <sstream>
 
 #include<zstd.h>
 
+#include"Structs.h"
+
+GeneralContext* ctxt;
+
+extern "C" void vmEnter_stub();
+extern "C" void run_orig_code(void* a);
+
 void LogMessage(const char* label, const char* format, ...) {
-    char buffer[256];
+    char buffer[512];
     va_list args;
     va_start(args, format);
     int p = vsnprintf(buffer, sizeof(buffer), format, args);
@@ -40,94 +43,10 @@ std::vector<uint8_t> decompress_data(const std::vector<uint8_t>& compressed_data
     return decompressed_buffer;
 }
 
-// UINT64 hWnd, void* lpText, void* lpCaption, UINT32 uType
-typedef int(*msgBoxA)(UINT64, void*, void*, UINT32);
-
-// lib name
-typedef UINT64(*loadLibrFn)(const char*);
-// addr
-typedef bool(*freeLibrFn)(void*);
-
-typedef UINT64(*GetCurrentProcessFn)();
-
-// NtAllocateVirtualMemory
-typedef UINT64(*NtAllocateVirtualMemoryFn) (
-    UINT64    ProcessHandle,
-    UINT64 BaseAddress,
-    ULONG_PTR ZeroBits,
-    UINT64   RegionSize,
-    ULONG     AllocationType,
-    ULONG     Protect
-    );
-
-typedef UINT32(*NtFreeVirtualMemoryFn) (
-    UINT64    ProcessHandle,
-    UINT64 BaseAddress,
-    UINT64   RegionSize,
-    ULONG     FreeType
-    );
 
 DWORD AlignUp(UINT32 size, UINT32 alignment) {
     return (size + alignment - 1) & ~(alignment - 1);
 }
-
-struct CustomSection {
-    void* data; // ptr to page
-    char secName[8];
-    UINT32 virtualSize, rawSize, characteristics, virtAddr;
-    UINT64 RegionSize;
-};
-
-struct FuncToImport {
-    UINT32 id; // (rva in original file)
-    UINT64 addr;
-    
-};
-
-struct DllToImport {
-    FuncToImport *funcs=0;
-    UINT32 funcsToImportCount;
-};
-
-typedef void* (__stdcall* getPebFn)();
-
-struct GeneralContext {
-    UINT8 sectionCount;
-    getPebFn getPeb;
-    msgBoxA messaageBox;
-    NtAllocateVirtualMemoryFn AllocateVirtualMemory;
-    NtFreeVirtualMemoryFn FreeVirtualMemory;
-    // NtFreeVirtualMemory
-    GetCurrentProcessFn getCurrentProc;
-    loadLibrFn LoadLib;
-    freeLibrFn FreeLib;
-
-
-    bool user32WasLoaded;
-
-    UINT64 kernel32Base, user32Base, ntdllBase;
-    
-    DllToImport *dllsToImport=0;
-    UINT32 dllsToImportCount;
-    
-    UINT32 entryBlockID;
-
-    UINT32 sizeofImage, entryPointRVA;
-    UINT64 imageBase;
-    
-    CustomSection *sections = 0;
-};
-
-extern "C" void* globalCtx = 0;
-
-GeneralContext* ctxt;
-
-struct VMSettings {
-    UINT64 SizeOfStackReserve;
-};
-
-typedef void* (__fastcall* malloc_prototype)(int);
-typedef void(__fastcall* free_prototype)(void*);
 
 void readU8(INT8* data, UINT32& offset, volatile UINT8& result) {
     result = data[offset];
@@ -169,18 +88,18 @@ void utf8_to_wchar_custom(const char* src, wchar_t* dest) {
     *dest = L'\0';
 }
 
-UINT64 GetModuleFromPEB(GeneralContext* ctxt, const wchar_t* dllName,bool log = 0) {
+UINT64 GetModuleFromPEB(const wchar_t* dllName,bool log = 0) {
 
     PPEB peb = 0;
     peb = (PPEB)ctxt->getPeb();
 
     if (!peb) {
-        MessageBoxA(0, "PEB is zero!", 0, 0);
+        LogMessage("", "PEB is zero!");
         return 0;
     }
 
     if (!peb->Ldr) {
-        MessageBoxA(0, "LDR is zero!", 0, 0);
+        LogMessage("", "LDR is zero!");
         return 0;
     }
 
@@ -252,7 +171,7 @@ UINT64 GetProcAddressFromPE(UINT64 moduleBase, const char* funcName) {
 
                 utf8_to_wchar_custom(targetDllName, wDllName);
 
-                UINT64 targetModule = GetModuleFromPEB(ctxt, wDllName);
+                UINT64 targetModule = GetModuleFromPEB(wDllName);
                 if(!targetModule)LoadLibraryA(targetDllName);
 
                 return GetProcAddressFromPE((UINT64)targetModule, targetFunc);
@@ -264,10 +183,12 @@ UINT64 GetProcAddressFromPE(UINT64 moduleBase, const char* funcName) {
     return 0;
 }
 
-
 UINT64 resolveFunc(GeneralContext* ctxt, const wchar_t* moduleName, const char* funcName,UINT16 ordVal = 0,bool ord = 0, bool log = 0)
 {
-    UINT64 targetModule = GetModuleFromPEB(ctxt, moduleName, log);
+    if (!strcmp(funcName, "vmEntryStub")) {
+        return (UINT64)&vmEnter_stub;
+    }
+    UINT64 targetModule = GetModuleFromPEB(moduleName, log);
     UINT64 funcAddr = 0;
 
     if (!targetModule) {
@@ -331,7 +252,6 @@ UINT64 resolveFunc(GeneralContext* ctxt, const wchar_t* moduleName, const char* 
 
     }
 
-
     return funcAddr;
 }
 
@@ -381,8 +301,6 @@ void* resolveIat(DWORD id) {
 
 }
 
-extern "C" void run_orig_code(void* a);
-
 DWORD ConvertPeCharacteristicsToProtect(DWORD characteristics) {
 
     bool isExecute = (characteristics & IMAGE_SCN_MEM_EXECUTE) != 0;
@@ -416,12 +334,205 @@ bool compareKey(uint8_t* crypted, std::vector<uint8_t>& sig) {
     return 1;
 }
 
-struct DataDirectoryInfo {
-    IMAGE_DATA_DIRECTORY raw;
-    UINT32 rva;
-};
+uint8_t* getRawPtrToWrite(const BasicInstruction& inst, UINT64* regs) {
+    if (inst.type0 == (uint8_t)OperandType::memory) {
+        UINT64 baseVal = (inst.mem0.base != (uint8_t)Register64::UNK) ? regs[inst.mem0.base] : 0;
+        UINT64 indexVal = (inst.mem0.index != (uint8_t)Register64::UNK) ? regs[inst.mem0.index] : 0;
 
-// runVM
+        uint8_t* calculatedAddress = (uint8_t*)(baseVal + (indexVal * inst.mem0.scale) + (int64_t)inst.mem0.offset);
+
+        return calculatedAddress;
+    }
+    else if (inst.type0 == (uint8_t)OperandType::reg) {
+        uint8_t* regAddress = (uint8_t*)&regs[inst.reg0];
+
+        return regAddress;
+    }
+
+    LogMessage("", "unk type0: %d", (int)inst.type0);
+    return nullptr;
+}
+
+UINT64 getRealValue(const BasicInstruction& inst, UINT64* regs, const LogicalBlock& block, int immOffset, int opSize) {
+    if (inst.type1 == (uint8_t)OperandType::imm) {
+        switch (opSize) {
+        case 1: return *(uint8_t*)(block.instructions.data() + immOffset);
+        case 2: return *(uint16_t*)(block.instructions.data() + immOffset);
+        case 4: return *(uint32_t*)(block.instructions.data() + immOffset);
+        case 8: return *(uint64_t*)(block.instructions.data() + immOffset);
+        }
+    }
+    else if (inst.type1 == (uint8_t)OperandType::reg) {
+        UINT64 regVal = regs[inst.reg1];
+        switch (opSize) {
+        case 1: return (uint8_t)regVal;
+        case 2: return (uint16_t)regVal;
+        case 4: return (uint32_t)regVal;
+        case 8: return regVal;
+        }
+    }
+    else if (inst.type1 == (uint8_t)OperandType::memory) {
+        UINT64 baseVal = (inst.mem1.base != (uint8_t)Register64::UNK) ? regs[inst.mem1.base] : 0;
+        UINT64 indexVal = (inst.mem1.index != (uint8_t)Register64::UNK) ? regs[inst.mem1.index] : 0;
+        uint8_t* srcMem = (uint8_t*)(baseVal + (indexVal * inst.mem1.scale) + inst.mem1.offset);
+        switch (opSize) {
+        case 1: return *(uint8_t*)srcMem;
+        case 2: return *(uint16_t*)srcMem;
+        case 4: return *(uint32_t*)srcMem;
+        case 8: return *(uint64_t*)srcMem;
+        }
+    }
+    return 0;
+}
+
+extern "C" void vmEnter(UINT64* regs, UINT64 blockID) {
+    auto it = ctxt->logicalBlocks.find(blockID);
+    if (it == ctxt->logicalBlocks.end()) {
+        LogMessage("", "cant find block with id: %p", blockID);
+        return;
+    }
+
+    LogicalBlock& block = it->second;
+    int doOffset = 0;
+
+    while (doOffset < block.instructions.size()) {
+
+        BasicInstruction inst = *(BasicInstruction*)(block.instructions.data() + doOffset);
+        uint8_t operCode = ((1 << 6) - 1) & inst.opCode;
+        int opSize = 1 << inst.size;
+        int immOffset = doOffset + sizeof(BasicInstruction);
+
+        uint8_t* ptrToWrite = getRawPtrToWrite(inst, regs);
+        if (!ptrToWrite) {
+            LogMessage("", "cant get ptr to write!");
+            return;
+        }
+
+        int nextInstructionOffset = sizeof(BasicInstruction) + (inst.type1 == (uint8_t)OperandType::imm ? opSize : 0);
+        
+        switch (operCode) {
+        case (uint8_t)OpCode::add:
+        {
+            UINT64 src = getRealValue(inst, regs, block, immOffset, opSize);
+            switch (opSize) {
+            case 1: *(uint8_t*)ptrToWrite += (uint8_t)src; break;
+            case 2: *(uint16_t*)ptrToWrite += (uint16_t)src; break;
+            case 4: *(uint32_t*)ptrToWrite += (uint32_t)src; break;
+            case 8: *(uint64_t*)ptrToWrite += src; break;
+            }
+            doOffset += nextInstructionOffset;
+            break;
+        }
+        case (uint8_t)OpCode::mov:
+        {
+            UINT64 src = getRealValue(inst, regs, block, immOffset, opSize);
+
+            switch (opSize) {
+            case 1: *(uint8_t*)ptrToWrite = (uint8_t)src; break;
+            case 2: *(uint16_t*)ptrToWrite = (uint16_t)src; break;
+            case 4: *(uint32_t*)ptrToWrite = (uint32_t)src; break;
+            case 8: *(uint64_t*)ptrToWrite = src; break;
+            }
+            doOffset += nextInstructionOffset;
+            break;
+        }
+
+        case (uint8_t)OpCode::xor_:
+        {
+            UINT64 src = getRealValue(inst, regs, block, immOffset, opSize);
+            switch (opSize) {
+            case 1: *(uint8_t*)ptrToWrite ^= (uint8_t)src; break;
+            case 2: *(uint16_t*)ptrToWrite ^= (uint16_t)src; break;
+            case 4: *(uint32_t*)ptrToWrite ^= (uint32_t)src; break;
+            case 8: *(uint64_t*)ptrToWrite ^= src; break;
+            }
+            doOffset += nextInstructionOffset;
+            break;
+        }
+
+        case (uint8_t)OpCode::sub:
+        {
+            UINT64 src = getRealValue(inst, regs, block, immOffset, opSize);
+            switch (opSize) {
+            case 1: *(uint8_t*)ptrToWrite -= (uint8_t)src; break;
+            case 2: *(uint16_t*)ptrToWrite -= (uint16_t)src; break;
+            case 4: *(uint32_t*)ptrToWrite -= (uint32_t)src; break;
+            case 8: *(uint64_t*)ptrToWrite -= src; break;
+            }
+            doOffset += nextInstructionOffset;
+            break;
+        }
+
+        case (uint8_t)OpCode::and_:
+        {
+            UINT64 src = getRealValue(inst, regs, block, immOffset, opSize);
+            switch (opSize) {
+            case 1: *(uint8_t*)ptrToWrite &= (uint8_t)src; break;
+            case 2: *(uint16_t*)ptrToWrite &= (uint16_t)src; break;
+            case 4: *(uint32_t*)ptrToWrite &= (uint32_t)src; break;
+            case 8: *(uint64_t*)ptrToWrite &= src; break;
+            }
+            doOffset += nextInstructionOffset;
+            break;
+        }
+
+        case (uint8_t)OpCode::or_:
+        {
+            UINT64 src = getRealValue(inst, regs, block, immOffset, opSize);
+            switch (opSize) {
+            case 1: *(uint8_t*)ptrToWrite |= (uint8_t)src; break;
+            case 2: *(uint16_t*)ptrToWrite |= (uint16_t)src; break;
+            case 4: *(uint32_t*)ptrToWrite |= (uint32_t)src; break;
+            case 8: *(uint64_t*)ptrToWrite |= src; break;
+            }
+            doOffset += nextInstructionOffset;
+            break;
+        }
+
+        case (uint8_t)OpCode::shr:
+        {
+            UINT64 shiftAmount = getRealValue(inst, regs, block, immOffset, opSize);
+            switch (opSize) {
+            case 1: *(uint8_t*)ptrToWrite >>= (uint8_t)shiftAmount; break;
+            case 2: *(uint16_t*)ptrToWrite >>= (uint16_t)shiftAmount; break;
+            case 4: *(uint32_t*)ptrToWrite >>= (uint32_t)shiftAmount; break;
+            case 8: *(uint64_t*)ptrToWrite >>= shiftAmount; break;
+            }
+            doOffset += nextInstructionOffset;
+            break;
+        }
+        case (uint8_t)OpCode::shl:
+        {
+            UINT64 shiftAmount = getRealValue(inst, regs, block, immOffset, opSize);
+            switch (opSize) {
+            case 1: *(uint8_t*)ptrToWrite <<= (uint8_t)shiftAmount; break;
+            case 2: *(uint16_t*)ptrToWrite <<= (uint16_t)shiftAmount; break;
+            case 4: *(uint32_t*)ptrToWrite <<= (uint32_t)shiftAmount; break;
+            case 8: *(uint64_t*)ptrToWrite <<= shiftAmount; break;
+            }
+            doOffset += nextInstructionOffset;
+            break;
+        }
+        case (uint8_t)OpCode::movzx:
+        {
+            UINT64 val = getRealValue(inst, regs, block, immOffset, opSize);
+            switch (opSize) {
+            case 2: *(uint16_t*)ptrToWrite = (uint8_t)val; break;
+            case 4: *(uint32_t*)ptrToWrite = (uint16_t)val; break;
+            case 8: *(uint64_t*)ptrToWrite = (uint32_t)val; break;
+            }
+            doOffset += nextInstructionOffset;
+        }
+
+            break;
+        default:
+            LogMessage("", "unk opcode: %d", operCode);
+            return;
+        }
+    }
+}
+
+
 extern "C" __declspec(dllexport) int runVM(INT8* inputParams) {
     uint32_t compSz = *reinterpret_cast<uint32_t*>(inputParams);
     uint32_t origSz = *reinterpret_cast<uint32_t*>(inputParams + 4);
@@ -453,57 +564,22 @@ extern "C" __declspec(dllexport) int runVM(INT8* inputParams) {
     ctxt = new GeneralContext();
 
     ctxt->getPeb = (getPebFn)inputParams;
-#if 1
-    {
-        // for the future: fill with zeros before leaving
-        const wchar_t* user32_ws = L"user32.dll";
-        ctxt->user32Base = GetModuleFromPEB(ctxt, user32_ws);
-    }
+
+    const wchar_t* user32_ws = L"user32.dll";
+    ctxt->user32Base = GetModuleFromPEB(user32_ws);
+
+    const wchar_t* kernel_ws = L"kernel32.dll";
+    ctxt->kernel32Base = GetModuleFromPEB(kernel_ws);
+    const char* loadLibA = "LoadLibraryA";
+    loadLibrFn loadLib = (loadLibrFn)GetProcAddressFromPE(ctxt->kernel32Base, loadLibA);
+    ctxt->LoadLib = loadLib;
+    const char* freeLib_s = "FreeLibrary";
+    freeLibrFn freeLib = (freeLibrFn)GetProcAddressFromPE(ctxt->kernel32Base, freeLib_s);
+    ctxt->FreeLib = freeLib;
+    ctxt->getCurrentProc = (GetCurrentProcessFn)GetProcAddressFromPE(ctxt->kernel32Base, "GetCurrentProcess");
     
-    {
-        const wchar_t* kernel_ws = L"kernel32.dll";
-        ctxt->kernel32Base = GetModuleFromPEB(ctxt, kernel_ws);
-    }
-
-    {
-        const char* loadLibA = "LoadLibraryA";
-        loadLibrFn loadLib = (loadLibrFn)GetProcAddressFromPE(ctxt->kernel32Base, loadLibA);
-        ctxt->LoadLib = loadLib;
-    }
-
-    {
-        const char* freeLib_s = "FreeLibrary";
-        freeLibrFn freeLib = (freeLibrFn)GetProcAddressFromPE(ctxt->kernel32Base, freeLib_s);
-        ctxt->FreeLib = freeLib;
-    }
-#endif
-    {
-        ctxt->getCurrentProc = (GetCurrentProcessFn)GetProcAddressFromPE(ctxt->kernel32Base, "GetCurrentProcess");
-    }
-
-    // if not loaded (by default)
-#if 0
-    if (!ctxt.user32Base) {
-        ctxt.user32WasLoaded = 0;
-        
-        const char* user32_s = "user32.dll";
-
-        ctxt.user32Base = ctxt.LoadLib(user32_s);
-
-        if (!ctxt.user32Base) {
-            return 2; // cant load user32
-        }
-    }
-    else {
-        ctxt.user32WasLoaded = 1;
-    }
-#endif
-    
-    {
-        //  NtFreeVirtualMemory
-        ctxt->AllocateVirtualMemory =  (NtAllocateVirtualMemoryFn)resolveFunc(ctxt,L"ntdll.dll", "NtAllocateVirtualMemory"); // resolveFunc
-        ctxt->FreeVirtualMemory = (NtFreeVirtualMemoryFn)resolveFunc(ctxt, L"ntdll.dll", "NtFreeVirtualMemory");
-    }
+    ctxt->AllocateVirtualMemory = (NtAllocateVirtualMemoryFn)resolveFunc(ctxt, L"ntdll.dll", "NtAllocateVirtualMemory");
+    ctxt->FreeVirtualMemory = (NtFreeVirtualMemoryFn)resolveFunc(ctxt, L"ntdll.dll", "NtFreeVirtualMemory");
     
     UINT32 offset = 10; // sizeof get peb code
 
@@ -514,7 +590,7 @@ extern "C" __declspec(dllexport) int runVM(INT8* inputParams) {
     
     readU8(inputParams, offset, ctxt->sectionCount);
 
-    char* allocedMemRaw = (char*)VirtualAlloc((void*)0, ctxt->sizeofImage, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE); // ctxt->imageBase
+    char* allocedMemRaw = (char*)VirtualAlloc((void*)0, ctxt->sizeofImage, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 
     if (!allocedMemRaw) {
         DWORD errorCode = GetLastError();
@@ -530,7 +606,7 @@ extern "C" __declspec(dllexport) int runVM(INT8* inputParams) {
     for (int i = 0; i < ctxt->sectionCount; i++) {
 
         CustomSection section;
-        readU32(inputParams, offset, section.rawSize);
+        readU32(inputParams, offset, section.rawSize); 
         readU32(inputParams, offset, section.virtualSize);
         readU32(inputParams, offset, section.virtAddr);
 
@@ -541,11 +617,11 @@ extern "C" __declspec(dllexport) int runVM(INT8* inputParams) {
 
         readU32(inputParams, offset, section.characteristics);
 
-        memcpy(allocedMemRaw + section.virtAddr, inputParams + offset, section.rawSize);
+        memcpy(allocedMemRaw + section.virtAddr, inputParams + offset, min(section.rawSize, section.virtualSize));
 
         shortInfoSection.push_back(section);
         
-        offset += section.rawSize;
+        offset += min(section.rawSize, section.virtualSize);
 
     }
 
@@ -575,7 +651,7 @@ extern "C" __declspec(dllexport) int runVM(INT8* inputParams) {
                 uint16_t ordVal = 0;
                 readU16(inputParams, offset, ordVal);
 
-                UINT64 targMod = GetModuleFromPEB(ctxt, w_dllName1);
+                UINT64 targMod = GetModuleFromPEB(w_dllName1);
                 if (!targMod) {
                     targMod = (UINT64)LoadLibraryW(w_dllName1);
                     if (!targMod) {
@@ -622,7 +698,7 @@ extern "C" __declspec(dllexport) int runVM(INT8* inputParams) {
     readU32(inputParams, offset, relocsCount);
 
     UINT64 delta = ((UINT64)allocedMemRaw) - ctxt->imageBase;
-    //LogMessage("tt", "fixing %d relocs", relocsCount);
+
     // fixing relocs
     for (int i = 0;i < relocsCount;i++) {
         UINT32 realocType = 0, realocVA = 0;
@@ -635,6 +711,24 @@ extern "C" __declspec(dllexport) int runVM(INT8* inputParams) {
             // unsoported
             LogMessage(" ", "Unsuported reloc type (DIR64 only)!");
         }
+    }
+    UINT32 logicalBlocksCount = 0;
+    readU32(inputParams, offset, logicalBlocksCount);
+
+    for (int i = 0;i < logicalBlocksCount;i++) {
+        
+        UINT32 instructionsInRawBytes = 0, blockID = 0;
+        readU32(inputParams, offset, instructionsInRawBytes);
+        readU32(inputParams, offset, blockID);
+
+        ctxt->logicalBlocks[blockID] = LogicalBlock();
+
+        ctxt->logicalBlocks[blockID].instructions.insert(ctxt->logicalBlocks[blockID].instructions.end(),
+            (uint8_t*)inputParams + offset,
+            (uint8_t*)inputParams + offset + instructionsInRawBytes
+            );
+
+        offset += instructionsInRawBytes;
     }
 
     for (int i = 0; i < ctxt->sectionCount; i++) {
@@ -660,25 +754,10 @@ extern "C" __declspec(dllexport) int runVM(INT8* inputParams) {
 
      // free data
 
-    for (int i = 0;i < ctxt->sectionCount;i++) {
-        UINT64 result = ctxt->FreeVirtualMemory(ctxt->getCurrentProc(), // -1
-            (UINT64)&ctxt->sections[i].data,
-            (UINT64)&ctxt->sections[i].RegionSize,
-            MEM_RELEASE);
-        ctxt->sections;
-        if (result != 0) // STATUS_SUCCESS
-        {
-            MessageBoxA(0, "cant free section!", 0, 0);
-        }
-    }
-
-    delete[] ctxt->sections;
     delete[] ctxt->dllsToImport;
     delete ctxt;
 
     MessageBoxA(0, "sus exit!", 0, 0);
-
-    ExitProcess(0);
 
     return 0;
 

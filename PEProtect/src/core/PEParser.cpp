@@ -15,12 +15,11 @@ const std::vector<SectionInfo> PEParser::parseSectionList(bool logSection) const
     if (logSection)std::cout << "[*] Parsed sections:\n";
     for (int i = 0; i < sectionCount; i++) {
         if (logSection) {
-            // Безопасно извлекаем имя секции (до 8 символов)
-            char safeName[9] = { 0 };
-            memcpy(safeName, secArray[i].Name, 8);
+            char sectionName[9] = { 0 };
+            memcpy(sectionName, secArray[i].Name, 8);
 
             std::cout << "==================================================\n";
-            std::cout << " SECTION [" << i << "]: " << safeName << "\n";
+            std::cout << " SECTION [" << i << "]: " << sectionName << "\n";
             std::cout << "==================================================\n";
             std::cout << "  Misc.VirtualSize:      0x" << std::hex << secArray[i].Misc.VirtualSize << '\n';
             std::cout << "  VirtualAddress:        0x" << std::hex << secArray[i].VirtualAddress << '\n';
@@ -50,7 +49,7 @@ const std::vector<SectionInfo> PEParser::parseSectionList(bool logSection) const
     return result;
 }
 
-void PEParser::getBlocksToVirt()
+void PEParser::parseBlocksToVirt()
 {
 
     std::vector<DWORD> foundMatches = PatternScan("48 8D 05 ? ? ? ? C3"), posibleEnterTags = PatternScan("E8 ? ? ? ? 90 90 90 90 90 90 90 90");
@@ -65,11 +64,11 @@ void PEParser::getBlocksToVirt()
         uint64_t dataValue = *(uint64_t*)(originalBinFile.data() + offToData);
 
         if (dataValue == 0xDEADC0DE11223344) {
-            std::cout << "[*] found vmp_start tag at: 0x" << std::hex << calcedRIP << std::dec << '\n';
+            std::cout << "[*] vmp_start tag at: 0x" << std::hex << calcedRIP << std::dec << '\n';
             tagVmStartRVA = calcedRIP;
         }
         else if (dataValue == 0xDEADC0DE44332211) {
-            std::cout << "[*] found vmp_end tag at: 0x" << std::hex << calcedRIP << std::dec << '\n';
+            std::cout << "[*] vmp_end tag at: 0x" << std::hex << calcedRIP << std::dec << '\n';
             tagVmEndRVA = calcedRIP;
         }
     }
@@ -85,11 +84,11 @@ void PEParser::getBlocksToVirt()
         DWORD insOffset = *(DWORD*)(this->originalBinFile.data() + targetOff + 1);
         DWORD calledFuncRva = targetRVA + 5 + insOffset;
         if (calledFuncRva == tagVmStartRVA) {
-            std::cout << "[*] found vm_start usage at: " << std::hex << targetRVA << '\n';
+            std::cout << "[*] vm_start usage at: 0x" << std::hex << targetRVA << '\n';
             start.push_back(targetRVA);
         }
         else if (calledFuncRva == tagVmEndRVA) {
-            std::cout << "[*] found vm_end usage at: " << std::hex << targetRVA << '\n';
+            std::cout << "[*] vm_end usage at: 0x" << std::hex << targetRVA << '\n';
             end.push_back(targetRVA);
         }
     }
@@ -106,28 +105,14 @@ void PEParser::getBlocksToVirt()
 
             if (end[j] < end[minEndIdx]) minEndIdx = j;
         }
-        blocksToVirt.push_back({start[i],end[minEndIdx] -start[i]});
+        blocksToVirt.push_back({start[i],end[minEndIdx] - start[i] - 13 - 6}); // 19 - sizeof code vm start
     }
-
-    for (int i = 0; i < blocksToVirt.size(); i++) {
-        auto& sec = getSectionFromRVA(blocksToVirt[i].rva);
-        DWORD offInSec = blocksToVirt[i].rva - sec.virtualAddres;
-        for (int j = 0;j < blocksToVirt[i].size + 5;j++)
-        {
-            sec.data[offInSec + j] = 0x90;
-        }
-    }
-    
-    auto& sec0 = getSectionFromRVA(this->tagVmStartRVA);
-    auto& sec1 = getSectionFromRVA(this->tagVmEndRVA);
-    
-    DWORD inOff0 = this->tagVmStartRVA - sec0.virtualAddres;
-    DWORD inOff1 = this->tagVmEndRVA - sec1.virtualAddres;
-
-    memset(&sec0.data[inOff0], 0x90, 5);
-    memset(&sec1.data[inOff1], 0x90, 5);
 }
 
+const std::vector<CodeBlockToVirt>& PEParser::getBlocksToVirt()
+{
+    return this->blocksToVirt;
+}
 
 DWORD PEParser::getVaFromExportTable(const char* funcName)
 {
@@ -138,6 +123,17 @@ SectionInfo& PEParser::getSectionFromRVA(DWORD RVA) {
 
     for (auto& i : sectionList) {
         if (i.virtualAddres <= RVA && RVA <= i.virtualSize + i.virtualAddres) {
+            return i;
+        }
+    }
+    throw std::exception("Cant find section from RVA!");
+}
+
+int PEParser::getSectionIndexFromRVA(DWORD RVA)
+{
+    
+    for (int i = 0;i < sectionList.size();i++) {
+        if (sectionList[i].virtualAddres <= RVA && RVA <= sectionList[i].virtualSize + sectionList[i].virtualAddres) {
             return i;
         }
     }
@@ -167,6 +163,11 @@ void PEParser::read(const std::string& path, bool logSection)
         throw std::exception("x64 support only!");
     }
 
+    if ((optHeader->DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE) == 0) {
+        std::cout << "[ERR] Programm should support ASLR!\n";
+        throw std::exception("Programm should support ASLR");
+    }
+
     for (int i = 0;i < 16;i++) {
         memcpy(&DataDirectory[i].raw, &optHeader->DataDirectory[i], sizeof(IMAGE_DATA_DIRECTORY));
     }
@@ -180,7 +181,7 @@ void PEParser::read(const std::string& path, bool logSection)
             subSys == IMAGE_SUBSYSTEM_WINDOWS_CUI)
         ) {
         std::cout << "[ERR] IMAGE_SUBSYSTEM_WINDOWS_GUI and IMAGE_SUBSYSTEM_WINDOWS_CUI only!\n";
-        throw std::exception("x64 support only!");
+        throw std::exception("usnoportes subsystem!");
     }
 
     imgBase = optHeader->ImageBase;
@@ -199,7 +200,7 @@ void PEParser::read(const std::string& path, bool logSection)
     baseOfCode = optHeader->BaseOfCode;
     sectionList = parseSectionList(logSection);
 
-    getBlocksToVirt();
+    parseBlocksToVirt();
 
     IMAGE_IMPORT_DESCRIPTOR* importDesc = (IMAGE_IMPORT_DESCRIPTOR*)(originalBinFile.data() + importOffset);
     IMAGE_EXPORT_DIRECTORY* tableExport = (IMAGE_EXPORT_DIRECTORY*)(exportOffset + originalBinFile.data());
@@ -225,7 +226,6 @@ void PEParser::read(const std::string& path, bool logSection)
 
         DWORD funcRva = functionTable[ordinalIdx];
 
-        //std::cout << i << " exported func is - " << funcName << '\n';
         exportFunctions[funcName] = funcRva;
     }
 
@@ -293,4 +293,20 @@ ImportFunctionInfo PEParser::getImportFuncFromRVA(DWORD RVA) {
         }
     }
     return {};
+}
+
+DWORD PEParser::getRvaImportFunc(const std::string& dllName, const std::string& funcName)
+{
+    for (int i = 0;i < originalIAT.size();i++) {
+        if (originalIAT[i].name != dllName) continue;
+        
+        for(int j = 0;j < originalIAT[i].functionsToImport.size();j++)
+        {
+            if (originalIAT[i].functionsToImport[j].name == funcName) {
+                return originalIAT[i].functionsToImport[j].RealAddressRva;
+            }
+        }
+    }
+
+    return 0;
 }

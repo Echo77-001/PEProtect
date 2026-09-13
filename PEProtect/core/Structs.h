@@ -1,6 +1,126 @@
 #pragma once
 
 #include<Windows.h>
+#include<vector>
+#include<cstdio>
+#include<map>
+
+#define ALIGNMENT 8
+#define ALIGN(size) (((size) + (ALIGNMENT - 1)) & ~(ALIGNMENT - 1))
+
+
+// UINT64 hWnd, void* lpText, void* lpCaption, UINT32 uType
+typedef int(*msgBoxA)(UINT64, void*, void*, UINT32);
+
+// lib name
+typedef UINT64(*loadLibrFn)(const char*);
+// addr
+typedef bool(*freeLibrFn)(void*);
+
+typedef UINT64(*GetCurrentProcessFn)();
+
+// NtAllocateVirtualMemory
+typedef UINT64(*NtAllocateVirtualMemoryFn) (
+    UINT64    ProcessHandle,
+    UINT64 BaseAddress,
+    ULONG_PTR ZeroBits,
+    UINT64   RegionSize,
+    ULONG     AllocationType,
+    ULONG     Protect
+    );
+
+typedef UINT32(*NtFreeVirtualMemoryFn) (
+    UINT64    ProcessHandle,
+    UINT64 BaseAddress,
+    UINT64   RegionSize,
+    ULONG     FreeType
+    );
+
+typedef void* (__fastcall* malloc_prototype)(int);
+typedef void(__fastcall* free_prototype)(void*);
+
+struct CustomSection {
+    void* data; // ptr to page
+    char secName[8];
+    UINT32 virtualSize, rawSize, characteristics, virtAddr;
+    UINT64 RegionSize;
+};
+
+struct FuncToImport {
+    UINT32 id; // (rva in original file)
+    UINT64 addr;
+};
+
+struct DllToImport {
+    FuncToImport* funcs = 0;
+    UINT32 funcsToImportCount;
+};
+
+typedef void* (__stdcall* getPebFn)();
+
+struct LogicalBlock {
+    std::vector<uint8_t> instructions;
+};
+
+struct GeneralContext {
+    UINT8 sectionCount;
+    getPebFn getPeb;
+    msgBoxA messaageBox;
+    NtAllocateVirtualMemoryFn AllocateVirtualMemory;
+    NtFreeVirtualMemoryFn FreeVirtualMemory;
+    // NtFreeVirtualMemory
+    GetCurrentProcessFn getCurrentProc;
+    loadLibrFn LoadLib;
+    freeLibrFn FreeLib;
+
+    bool user32WasLoaded;
+
+    UINT64 kernel32Base, user32Base, ntdllBase;
+
+    DllToImport* dllsToImport = 0;
+    UINT32 dllsToImportCount;
+
+    UINT32 entryBlockID;
+
+    UINT32 sizeofImage, entryPointRVA;
+    UINT64 imageBase;
+
+    // CustomSection *sections = 0;
+
+    std::map<DWORD, LogicalBlock> logicalBlocks;
+};
+
+struct DataDirectoryInfo {
+    IMAGE_DATA_DIRECTORY raw;
+    UINT32 rva;
+};
+
+#pragma pack(push, 1)
+
+struct alignas(1) VM_Memory {
+    uint8_t  base;
+    uint8_t  index;
+    uint8_t  scale;
+    uint32_t  offset;
+};
+
+struct alignas(1) BasicInstruction {
+    uint8_t opCode;
+    uint8_t size;
+    uint8_t type0;
+    uint8_t type1;
+
+    union {
+        uint8_t   reg0;
+        VM_Memory mem0;
+    };
+
+    union {
+        uint8_t   reg1;
+        VM_Memory mem1;
+    };
+};
+#pragma pack(pop)
 
 enum class Register64 : INT8 {
     RAX = 0, RBX, RCX, RDX, RSI, RDI, RBP, RSP,
@@ -8,19 +128,7 @@ enum class Register64 : INT8 {
     UNK = 0xFF
 };
 
-enum class OperandType : INT8 {
-    none,
-    reg,
-    number,
-    externalCall
-};
-
-enum JumpType {
-    internal_func,
-    extenral_func_iat
-};
-
-enum class OpCode : INT8 {
+enum class OpCode {
     mov = 0,
     movsx,
     movsxd,
@@ -50,7 +158,6 @@ enum class OpCode : INT8 {
     pop,
     xchg,
     nop,
-
     jmp,
     call,
     ret,
@@ -65,7 +172,6 @@ enum class OpCode : INT8 {
     jnb,
     jbe,
     jnbe,
-
     bt,
     cmpxchg,
     cmovz,
@@ -84,7 +190,12 @@ enum class OpCode : INT8 {
     COUNT
 };
 
-#if 1
+enum class OperandType : UINT32 {
+    memory,
+    reg,
+    imm
+};
+
 
 typedef struct _UNICODE_STRING
 {
@@ -158,103 +269,11 @@ typedef struct _RTL_USER_PROCESS_PARAMETERS
     ULONG EnvironmentSize;
 } RTL_USER_PROCESS_PARAMETERS, * PRTL_USER_PROCESS_PARAMETERS;
 
-//typedef struct _RTL_CRITICAL_SECTION RTL_CRITICAL_SECTION, * PRTL_CRITICAL_SECTION;
-//
-//typedef struct _RTL_CRITICAL_SECTION_DEBUG
-//{
-//    WORD Type;
-//    WORD CreatorBackTraceIndex;
-//    PRTL_CRITICAL_SECTION CriticalSection;
-//    LIST_ENTRY ProcessLocksList;
-//    ULONG EntryCount;
-//    ULONG ContentionCount;
-//    ULONG Flags;
-//    WORD CreatorBackTraceIndexHigh;
-//    WORD SpareUSHORT;
-//} RTL_CRITICAL_SECTION_DEBUG, * PRTL_CRITICAL_SECTION_DEBUG;
-
-//typedef struct _RTL_CRITICAL_SECTION
-//{
-//    PRTL_CRITICAL_SECTION_DEBUG DebugInfo;
-//    LONG LockCount;
-//    LONG RecursionCount;
-//    PVOID OwningThread;
-//    PVOID LockSemaphore;
-//    ULONG SpinCount;
-//} RTL_CRITICAL_SECTION, * PRTL_CRITICAL_SECTION;
-
 typedef struct _PEB_FREE_BLOCK
 {
     struct _PEB_FREE_BLOCK* Next;
     ULONG Size;
 } PEB_FREE_BLOCK, * PPEB_FREE_BLOCK;
-
-//typedef struct _LARGE_INTEGER
-//{
-//    union
-//    {
-//        struct
-//        {
-//            ULONG LowPart;
-//            LONG HighPart;
-//        };
-//        INT64 QuadPart;
-//    };
-//} LARGE_INTEGER, * PLARGE_INTEGER;
-
-//typedef struct _ULARGE_INTEGER
-//{
-//    union
-//    {
-//        struct
-//        {
-//            ULONG LowPart;
-//            ULONG HighPart;
-//        };
-//        UINT64 QuadPart;
-//    };
-//} ULARGE_INTEGER, * PULARGE_INTEGER;
-
-
-
-typedef struct _CUSTOM_LDR_DATA_TABLE_ENTRY {
-    LIST_ENTRY InLoadOrderLinks;
-    LIST_ENTRY InMemoryOrderLinks;
-    LIST_ENTRY InInitializationOrderLinks;
-    PVOID DllBase;
-    PVOID EntryPoint;
-    ULONG SizeOfImage;
-    UNICODE_STRING FullDllName;
-    UNICODE_STRING BaseDllName;
-    ULONG Flags;
-    WORD LoadCount;
-    WORD TlsIndex;
-    LIST_ENTRY HashLinks;
-    ULONG TimeDateStamp;
-} CUSTOM_LDR_DATA_TABLE_ENTRY, * PCUSTOM_LDR_DATA_TABLE_ENTRY;
-
-//typedef struct _IMAGE_DOS_HEADER {      // DOS .EXE header
-//    WORD   e_magic;                     // Magic number
-//    WORD   e_cblp;                      // Bytes on last page of file
-//    WORD   e_cp;                        // Pages in file
-//    WORD   e_crlc;                      // Relocations
-//    WORD   e_cparhdr;                   // Size of header in paragraphs
-//    WORD   e_minalloc;                  // Minimum extra paragraphs needed
-//    WORD   e_maxalloc;                  // Maximum extra paragraphs needed
-//    WORD   e_ss;                        // Initial (relative) SS value
-//    WORD   e_sp;                        // Initial SP value
-//    WORD   e_csum;                      // Checksum
-//    WORD   e_ip;                        // Initial IP value
-//    WORD   e_cs;                        // Initial (relative) CS value
-//    WORD   e_lfarlc;                    // File address of relocation table
-//    WORD   e_ovno;                      // Overlay number
-//    WORD   e_res[4];                    // Reserved words
-//    WORD   e_oemid;                     // OEM identifier (for e_oeminfo)
-//    WORD   e_oeminfo;                   // OEM information; e_oemid specific
-//    WORD   e_res2[10];                  // Reserved words
-//    LONG   e_lfanew;                    // File address of new exe header
-//} IMAGE_DOS_HEADER, * PIMAGE_DOS_HEADER;
-
 
 typedef struct _LDR_DATA_TABLE_ENTRY
 {
@@ -289,79 +308,6 @@ typedef struct _LDR_DATA_TABLE_ENTRY
     LIST_ENTRY ServiceTagLinks;
     LIST_ENTRY StaticLinks;
 } LDR_DATA_TABLE_ENTRY, * PLDR_DATA_TABLE_ENTRY;
-
-//typedef struct _IMAGE_FILE_HEADER {
-//    WORD    Machine;
-//    WORD    NumberOfSections;
-//    DWORD   TimeDateStamp;
-//    DWORD   PointerToSymbolTable;
-//    DWORD   NumberOfSymbols;
-//    WORD    SizeOfOptionalHeader;
-//    WORD    Characteristics;
-//} IMAGE_FILE_HEADER, * PIMAGE_FILE_HEADER;
-
-//typedef struct _IMAGE_DATA_DIRECTORY {
-//    DWORD   VirtualAddress;
-//    DWORD   Size;
-//} IMAGE_DATA_DIRECTORY, * PIMAGE_DATA_DIRECTORY;
-
-//typedef struct _IMAGE_OPTIONAL_HEADER64 {
-//    WORD        Magic;
-//    BYTE        MajorLinkerVersion;
-//    BYTE        MinorLinkerVersion;
-//    DWORD       SizeOfCode;
-//    DWORD       SizeOfInitializedData;
-//    DWORD       SizeOfUninitializedData;
-//    DWORD       AddressOfEntryPoint;
-//    DWORD       BaseOfCode;
-//    ULONGLONG   ImageBase;
-//    DWORD       SectionAlignment;
-//    DWORD       FileAlignment;
-//    WORD        MajorOperatingSystemVersion;
-//    WORD        MinorOperatingSystemVersion;
-//    WORD        MajorImageVersion;
-//    WORD        MinorImageVersion;
-//    WORD        MajorSubsystemVersion;
-//    WORD        MinorSubsystemVersion;
-//    DWORD       Win32VersionValue;
-//    DWORD       SizeOfImage;
-//    DWORD       SizeOfHeaders;
-//    DWORD       CheckSum;
-//    WORD        Subsystem;
-//    WORD        DllCharacteristics;
-//    ULONGLONG   SizeOfStackReserve;
-//    ULONGLONG   SizeOfStackCommit;
-//    ULONGLONG   SizeOfHeapReserve;
-//    ULONGLONG   SizeOfHeapCommit;
-//    DWORD       LoaderFlags;
-//    DWORD       NumberOfRvaAndSizes;
-//    IMAGE_DATA_DIRECTORY DataDirectory[16];
-//} IMAGE_OPTIONAL_HEADER64, * PIMAGE_OPTIONAL_HEADER64;
-
-//typedef struct _IMAGE_NT_HEADERS64 {
-//    DWORD Signature;
-//    IMAGE_FILE_HEADER FileHeader;
-//    IMAGE_OPTIONAL_HEADER64 OptionalHeader;
-//} IMAGE_NT_HEADERS64, * PIMAGE_NT_HEADERS64;
-
-//typedef PIMAGE_NT_HEADERS64                 PIMAGE_NT_HEADERS;
-
-//typedef struct _IMAGE_EXPORT_DIRECTORY {
-//    DWORD   Characteristics;
-//    DWORD   TimeDateStamp;
-//    WORD    MajorVersion;
-//    WORD    MinorVersion;
-//    DWORD   Name;
-//    DWORD   Base;
-//    DWORD   NumberOfFunctions;
-//    DWORD   NumberOfNames;
-//    DWORD   AddressOfFunctions;     // RVA from base of image
-//    DWORD   AddressOfNames;         // RVA from base of image
-//    DWORD   AddressOfNameOrdinals;  // RVA from base of image
-//} IMAGE_EXPORT_DIRECTORY, * PIMAGE_EXPORT_DIRECTORY;
-
-#define ALIGNMENT 8
-#define ALIGN(size) (((size) + (ALIGNMENT - 1)) & ~(ALIGNMENT - 1))
 
 typedef struct _PEB
 {
@@ -450,5 +396,3 @@ typedef struct _PEB
     PVOID WerRegistrationData;
     PVOID WerShipAssertPtr;
 } PEB, * PPEB;
-
-#endif

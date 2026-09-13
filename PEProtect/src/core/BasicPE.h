@@ -79,8 +79,6 @@ protected:
 
     std::vector<CodeBlockToVirt> blocksToVirt;
     
-    //DWORD SizeOfImage, SizeOfHeaders, SizeOfCode;
-    
     DataDirectoryInfo DataDirectory[IMAGE_NUMBEROF_DIRECTORY_ENTRIES];
 
 public:

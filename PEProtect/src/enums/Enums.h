@@ -60,14 +60,14 @@ enum class OpCode : uint8_t {
     outsb,
     setbe,
 
-    COUNT
+    COUNT,
+    UNK
 };
 
 enum class OperandType : uint8_t {
-    none,
+    memory,
     reg,
-    number,
-    externalCall
+    imm
 };
 
 enum class Register64 : uint8_t {

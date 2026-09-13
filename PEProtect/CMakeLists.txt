@@ -18,8 +18,25 @@ FetchContent_Declare(
     URL "https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz"
     SOURCE_SUBDIR build/cmake
 )
-
 FetchContent_MakeAvailable(zstd)
+
+FetchContent_Declare(
+    zydis
+    URL "https://github.com/zyantific/zydis/releases/download/v4.1.0/zydis-amalgamated.tar.gz"
+)
+FetchContent_MakeAvailable(zydis)
+
+add_library(Zydis STATIC
+    "${zydis_SOURCE_DIR}/Zydis.c"
+    "${zydis_SOURCE_DIR}/Zydis.h"
+)
+
+target_compile_definitions(Zydis PUBLIC ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD)
+
+target_include_directories(Zydis PUBLIC 
+    "${zydis_SOURCE_DIR}"
+    "${zydis_SOURCE_DIR}/.."
+)
 
 add_executable(PEProtect
     src/main.cpp
@@ -31,8 +48,6 @@ add_executable(PEProtect
     src/core/PEParser.h
     src/core/Utils.cpp
     src/core/Utils.h
-    src/disassembler/disassembler.cpp
-    src/disassembler/disassembler.h
     src/enums/Enums.h
     src/vm/VMInstruction.h
     src/vm/VMInstruction.cpp
@@ -44,6 +59,15 @@ add_library(PEProtect_core SHARED
     core/main.cpp
     core/Structs.h
     core/func.asm
+)
+
+add_library(PEProtect_lib STATIC
+    lib/func.asm
+)
+
+add_library(PEProtect_dyn SHARED
+    dynamic/main.cpp
+    dynamic/main.h
 )
 
 target_include_directories(PEProtect PRIVATE 
@@ -60,6 +84,7 @@ target_include_directories(PEProtect_core PRIVATE
 
 target_link_libraries(PEProtect PRIVATE 
     libzstd_static
+    Zydis
 )
 
 target_link_libraries(PEProtect_core PRIVATE 
