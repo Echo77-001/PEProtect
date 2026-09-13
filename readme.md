@@ -32,8 +32,8 @@ A PE file packer for Windows x64.
 </p>
 
 You can check out the VirusTotal test results for a sample file processed with this tool:
-* [VirusTotal Report (Before Packing)](https://www.virustotal.com/gui/file/127cd97708944110d0f13bbc7b1e912cc6cf12740b16e1c15fd5562e687a83f1/detection)
-* [VirusTotal Report (After Packing)](https://www.virustotal.com/gui/file/627d334cb41ab3cb3045a0f7271c3a9bd56502c468530f20842bd395966a6705?nocache=1)
+* [VirusTotal Report (Before Packing)](https://virustotal.com)
+* [VirusTotal Report (After Packing)](https://virustotal.com)
 
 ## Building
 
@@ -77,7 +77,7 @@ Wrap the target code block with `PEPROTECT_START()` and `PEPROTECT_END()` marker
 
 ```cpp
 #include <iostream>
-#include<PEProtect.h>
+#include <PEProtect.h>
 
 int main() {
     std::cout << "Enter key: ";
@@ -114,6 +114,26 @@ int main() {
     return 0;
 }
 ```
+
+### Disassembly Comparison
+
+Here is how the protected block looks under the hood before and after compilation with virtualization enabled:
+
+<p align="center">
+  <b>Before Virtualization (Original Code Assembly)</b><br>
+  <img src="images/Before_eg.png" alt="Before Virtualization" width="100%">
+</p>
+
+<br>
+
+<p align="center">
+  <b>After Virtualization (VM Entry Point)</b><br>
+  <img src="images/After_EG.png" alt="After Virtualization" width="100%">
+</p>
+
+<p align="center">
+  <em>The original mathematical operations are fully obscured and replaced by the execution entry point of the internal virtual machine.</em>
+</p>
 
 ## To-Do
 
